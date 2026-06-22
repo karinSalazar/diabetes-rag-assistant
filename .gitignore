@@ -216,3 +216,77 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Secretos 
+.env
+api/auth/keys.json
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Datos locales
+data/raw/
+data/processed/
+vectordb/
+
+# MLflow
+mlruns/
+
+# Docker
+*.log
+
+# Evaluación (resultados grandes)
+evaluacion/resultados/
+evaluacion/graficas/
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secretos — NUNCA al repositorio
+.env
+api/auth/keys.json
+
+# Entorno virtual
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# Datos locales (pesados, no van al repo)
+data/raw/
+data/processed/
+vectordb/chroma_db/
+
+# MLflow
+mlruns/
+
+# Resultados de evaluación (se regeneran)
+evaluacion/resultados/
+evaluacion/graficas/
+
+# Figuras del TFM (las guardas aparte)
+tfm/figuras/
+
+# VS Code / IDE
+.vscode/
+.idea/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
