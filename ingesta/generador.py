@@ -28,6 +28,7 @@ from config import Config
 from ingesta.indexador import buscar, _obtener_coleccion, generar_embedding
 from ingesta.reranker import rerank
 from privacidad.anonimizador import anonimizar
+from privacidad.guardrails import validar_entrada, validar_salida
 
 
 # Cliente de Ollama
@@ -119,6 +120,21 @@ def responder(
     pregunta_segura = resultado_anon["texto_anonimizado"]
     pii_detectada = resultado_anon["detecciones"]
 
+    # ── GUARDRAIL DE ENTRADA: validar la pregunta antes de procesarla ──
+    validacion_entrada = validar_entrada(pregunta_segura, nivel="equilibrado")
+    if not validacion_entrada.es_valida:
+        # La pregunta fue bloqueada: devolver el mensaje de seguridad
+        return {
+            "pregunta":         pregunta,
+            "pregunta_segura":  pregunta_segura,
+            "respuesta":        validacion_entrada.mensaje,
+            "fuentes":          [],
+            "n_fragmentos":     0,
+            "pii_detectada":    pii_detectada,
+            "bloqueado":        True,
+            "categoria_bloqueo": validacion_entrada.categoria,
+        }
+    
     # ── 1. RECUPERAR: buscar fragmentos relevantes en ChromaDB ──
     coleccion = _obtener_coleccion(reiniciar=False)
     if coleccion.count() == 0:
@@ -173,6 +189,11 @@ def responder(
     )
     texto_respuesta = respuesta_llm["message"]["content"].strip()
 
+    # ── GUARDRAIL DE SALIDA: validar la respuesta antes de mostrarla ──
+    validacion_salida = validar_salida(texto_respuesta)
+    if not validacion_salida.es_valida:
+        texto_respuesta = validacion_salida.mensaje
+
     return {
         "pregunta":          pregunta,           # la original (para mostrar al usuario)
         "pregunta_segura":   pregunta_segura,    # la anonimizada (la que vio el modelo)
@@ -180,6 +201,8 @@ def responder(
         "fuentes":           fuentes,
         "n_fragmentos":      len(fragmentos),
         "pii_detectada":     pii_detectada,      # qué datos personales se enmascararon
+        "bloqueado":         False,
+        "categoria_bloqueo": "ok",
     }
 
 
