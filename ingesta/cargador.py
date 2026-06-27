@@ -16,6 +16,9 @@ Uso:
     # Toda una carpeta
     fragmentos = cargar_carpeta("data/raw")
 """
+import os
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+
 import warnings
 warnings.filterwarnings("ignore", message=".*ARC4.*")
 

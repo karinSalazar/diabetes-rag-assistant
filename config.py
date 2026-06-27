@@ -12,6 +12,9 @@ Uso:
 import os
 from dotenv import load_dotenv
 
+# Desactivar la telemetría de ChromaDB (evita mensajes de error inofensivos)
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+
 # Carga las variables del archivo .env al entorno
 load_dotenv()
 
