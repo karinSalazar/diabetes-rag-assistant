@@ -16,6 +16,8 @@ Uso:
     # Toda una carpeta
     fragmentos = cargar_carpeta("data/raw")
 """
+import warnings
+warnings.filterwarnings("ignore", message=".*ARC4.*")
 
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -120,7 +122,23 @@ def _leer_html(ruta: Path) -> list[dict]:
     for etiqueta in sopa(["script", "style", "nav", "footer", "header", "aside"]):
         etiqueta.decompose()
 
-    lineas = [l.strip() for l in sopa.get_text("\n").splitlines() if l.strip()]
+    # Líneas de navegación web que no son contenido clínico
+    BASURA = {
+        "skip to main content", "credits", "menu", "search",
+        "home", "close", "share", "print", "download",
+        "subscribe", "newsletter", "cookies", "accept",
+    }
+
+    lineas = []
+    for linea in sopa.get_text("\n").splitlines():
+        limpia = linea.strip()
+        # Saltar líneas vacías, muy cortas, o que son basura de navegación
+        if not limpia or len(limpia) < 3:
+            continue
+        if limpia.lower() in BASURA:
+            continue
+        lineas.append(limpia)
+
     texto = "\n".join(lineas)
 
     return [{
