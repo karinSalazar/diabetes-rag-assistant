@@ -27,6 +27,7 @@ import ollama
 from config import Config
 from ingesta.indexador import buscar, _obtener_coleccion, generar_embedding
 from ingesta.reranker import rerank
+from privacidad.anonimizador import anonimizar
 
 
 # Cliente de Ollama
@@ -112,6 +113,12 @@ def responder(
     n = n_fragmentos or Config.N_RESULTADOS_RAG
     historial = historial or []
 
+    # ── ANONIMIZACIÓN: enmascarar datos personales ANTES de procesar ──
+    # El texto que llega al modelo y a los logs nunca contiene PII.
+    resultado_anon = anonimizar(pregunta)
+    pregunta_segura = resultado_anon["texto_anonimizado"]
+    pii_detectada = resultado_anon["detecciones"]
+
     # ── 1. RECUPERAR: buscar fragmentos relevantes en ChromaDB ──
     coleccion = _obtener_coleccion(reiniciar=False)
     if coleccion.count() == 0:
@@ -124,7 +131,7 @@ def responder(
 
     # Recuperar MÁS candidatos de los necesarios (para que el reranker elija)
     n_candidatos = Config.N_CANDIDATOS_RERANK
-    emb_pregunta = generar_embedding(pregunta)
+    emb_pregunta = generar_embedding(pregunta_segura)
     resultados = coleccion.query(
         query_embeddings=[emb_pregunta],
         n_results=min(n_candidatos, coleccion.count()),
@@ -140,7 +147,7 @@ def responder(
         })
 
     # RE-RANKING: reordenar por relevancia real y quedarse con los mejores
-    fragmentos = rerank(pregunta, candidatos, top_k=n)
+    fragmentos = rerank(pregunta_segura, candidatos, top_k=n)
     contexto, fuentes = _construir_contexto(fragmentos)
 
     # ── 2. GENERAR: construir los mensajes para Llama ───────────
@@ -154,7 +161,7 @@ def responder(
     # El mensaje actual: contexto + pregunta
     mensaje_usuario = (
         f"Contexto médico:\n{contexto}\n\n"
-        f"Pregunta del usuario: {pregunta}\n\n"
+        f"Pregunta del usuario: {pregunta_segura}\n\n"
         f"Responde basándote únicamente en el contexto anterior."
     )
     mensajes.append({"role": "user", "content": mensaje_usuario})
@@ -167,10 +174,12 @@ def responder(
     texto_respuesta = respuesta_llm["message"]["content"].strip()
 
     return {
-        "pregunta":     pregunta,
-        "respuesta":    texto_respuesta,
-        "fuentes":      fuentes,
-        "n_fragmentos": len(fragmentos),
+        "pregunta":          pregunta,           # la original (para mostrar al usuario)
+        "pregunta_segura":   pregunta_segura,    # la anonimizada (la que vio el modelo)
+        "respuesta":         texto_respuesta,
+        "fuentes":           fuentes,
+        "n_fragmentos":      len(fragmentos),
+        "pii_detectada":     pii_detectada,      # qué datos personales se enmascararon
     }
 
 
