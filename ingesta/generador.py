@@ -26,6 +26,7 @@ import ollama
 
 from config import Config
 from ingesta.indexador import buscar, _obtener_coleccion, generar_embedding
+from ingesta.reranker import rerank
 
 
 # Cliente de Ollama
@@ -121,21 +122,25 @@ def responder(
             "n_fragmentos": 0,
         }
 
+    # Recuperar MÁS candidatos de los necesarios (para que el reranker elija)
+    n_candidatos = Config.N_CANDIDATOS_RERANK
     emb_pregunta = generar_embedding(pregunta)
     resultados = coleccion.query(
         query_embeddings=[emb_pregunta],
-        n_results=n,
+        n_results=min(n_candidatos, coleccion.count()),
     )
 
-    # Empaquetar los fragmentos recuperados
-    fragmentos = []
+    # Empaquetar los candidatos recuperados
+    candidatos = []
     for doc, meta in zip(resultados["documents"][0], resultados["metadatas"][0]):
-        fragmentos.append({
+        candidatos.append({
             "texto":  doc,
             "fuente": meta.get("fuente", "?"),
             "pagina": meta.get("pagina", ""),
         })
 
+    # RE-RANKING: reordenar por relevancia real y quedarse con los mejores
+    fragmentos = rerank(pregunta, candidatos, top_k=n)
     contexto, fuentes = _construir_contexto(fragmentos)
 
     # ── 2. GENERAR: construir los mensajes para Llama ───────────
