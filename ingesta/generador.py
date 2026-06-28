@@ -23,17 +23,19 @@ os.environ["ANONYMIZED_TELEMETRY"] = "False"
 os.environ["CHROMA_TELEMETRY_ENABLED"] = "False"
 
 import ollama
-
+import time
 from config import Config
 from ingesta.indexador import buscar, _obtener_coleccion, generar_embedding
 from ingesta.reranker import rerank
 from privacidad.anonimizador import anonimizar
 from privacidad.guardrails import validar_entrada, validar_salida
-
+from trazabilidad.registro import inicializar_mlflow, registrar_consulta
 
 # Cliente de Ollama
 _ollama = ollama.Client(host=Config.OLLAMA_HOST)
 
+# Inicializar trazabilidad MLflow al cargar el módulo
+inicializar_mlflow()
 
 # ── Instrucciones para el modelo (prompt del sistema) ────────
 # Estas reglas son lo que convierte a Llama en un asistente clínico
@@ -111,6 +113,7 @@ def responder(
           - fuentes:      lista de documentos usados
           - n_fragmentos: cuántos fragmentos se recuperaron
     """
+    t_inicio = time.time()   # ← cronómetro
     n = n_fragmentos or Config.N_RESULTADOS_RAG
     historial = historial or []
 
@@ -123,8 +126,7 @@ def responder(
     # ── GUARDRAIL DE ENTRADA: validar la pregunta antes de procesarla ──
     validacion_entrada = validar_entrada(pregunta_segura, nivel="equilibrado")
     if not validacion_entrada.es_valida:
-        # La pregunta fue bloqueada: devolver el mensaje de seguridad
-        return {
+        resultado_bloqueo = {
             "pregunta":         pregunta,
             "pregunta_segura":  pregunta_segura,
             "respuesta":        validacion_entrada.mensaje,
@@ -134,6 +136,8 @@ def responder(
             "bloqueado":        True,
             "categoria_bloqueo": validacion_entrada.categoria,
         }
+        registrar_consulta(resultado_bloqueo, tiempo_seg=time.time() - t_inicio)
+        return resultado_bloqueo
     
     # ── 1. RECUPERAR: buscar fragmentos relevantes en ChromaDB ──
     coleccion = _obtener_coleccion(reiniciar=False)
@@ -194,16 +198,18 @@ def responder(
     if not validacion_salida.es_valida:
         texto_respuesta = validacion_salida.mensaje
 
-    return {
-        "pregunta":          pregunta,           # la original (para mostrar al usuario)
-        "pregunta_segura":   pregunta_segura,    # la anonimizada (la que vio el modelo)
+    resultado_final = {
+        "pregunta":          pregunta,
+        "pregunta_segura":   pregunta_segura,
         "respuesta":         texto_respuesta,
         "fuentes":           fuentes,
         "n_fragmentos":      len(fragmentos),
-        "pii_detectada":     pii_detectada,      # qué datos personales se enmascararon
+        "pii_detectada":     pii_detectada,
         "bloqueado":         False,
         "categoria_bloqueo": "ok",
     }
+    registrar_consulta(resultado_final, tiempo_seg=time.time() - t_inicio)
+    return resultado_final
 
 
 # ── Prueba directa del módulo ────────────────────────────────
