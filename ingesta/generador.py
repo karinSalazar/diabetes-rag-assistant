@@ -61,16 +61,17 @@ REGLAS IMPORTANTES:
 
 # ── Construcción del contexto ────────────────────────────────
 
-def _construir_contexto(fragmentos: list[dict]) -> tuple[str, list[str]]:
+def _construir_contexto(fragmentos: list[dict]) -> tuple[str, list[dict]]:
     """
     Junta los fragmentos recuperados en un único texto de contexto
-    para pasárselo al modelo, e identifica las fuentes usadas.
+    para pasárselo al modelo, e identifica las fuentes usadas con su página.
 
     Returns:
         (contexto, lista_de_fuentes)
+        donde cada fuente es {"fuente": nombre, "pagina": pág}
     """
     bloques = []
-    fuentes = set()
+    fuentes_vistas = []  # lista de dicts {fuente, pagina}, sin duplicados
 
     for frag in fragmentos:
         fuente = frag.get("fuente", "documento")
@@ -84,11 +85,60 @@ def _construir_contexto(fragmentos: list[dict]) -> tuple[str, list[str]]:
         etiqueta += "]"
 
         bloques.append(f"{etiqueta}\n{texto}")
-        fuentes.add(fuente)
+
+        # Registrar la fuente con su página (evitar duplicados exactos)
+        clave = (fuente, pagina)
+        if clave not in [(f["fuente"], f["pagina"]) for f in fuentes_vistas]:
+            fuentes_vistas.append({"fuente": fuente, "pagina": pagina})
 
     contexto = "\n\n---\n\n".join(bloques)
-    return contexto, sorted(fuentes)
+    return contexto, fuentes_vistas
 
+# ___________
+
+def _limpiar_etiquetas(texto: str) -> str:
+    """
+    Elimina las etiquetas de anonimización ([NOMBRE], [DNI], etc.) que
+    el modelo pueda haber repetido en su respuesta, dejando el texto natural.
+
+    Maneja varios casos:
+      "Hola [NOMBRE], me alegra" → "Hola, me alegra"
+      "Hola [NOMBRE]. Me alegra" → "Hola. Me alegra"
+      "Tu DNI [DNI] está..."     → "Tu DNI está..."
+    """
+    import re
+
+    etiquetas = [
+        "NOMBRE", "DNI", "NIE", "IBAN", "NUM_SS", "HISTORIA_CLINICA",
+        "EMAIL", "TELEFONO", "FECHA_NAC", "DIRECCION",
+    ]
+
+    resultado = texto
+    for etiqueta in etiquetas:
+        marca = f"[{etiqueta}]"
+
+        # Caso 1: "Hola [NOMBRE]," → "Hola," (la etiqueta y la coma siguiente
+        # se sustituyen por una sola coma, conservando la puntuación)
+        resultado = re.sub(rf"\s*{re.escape(marca)}\s*,", ",", resultado)
+
+        # Caso 2: "Hola [NOMBRE]." → "Hola." (igual con punto)
+        resultado = re.sub(rf"\s*{re.escape(marca)}\s*\.", ".", resultado)
+
+        # Caso 3: la etiqueta en medio sin puntuación → se quita dejando un espacio
+        resultado = re.sub(rf"\s*{re.escape(marca)}\s*", " ", resultado)
+
+    # Limpieza final
+    resultado = re.sub(r"\s+", " ", resultado)              # espacios múltiples
+    resultado = re.sub(r"\s+([.,;:!?])", r"\1", resultado)  # espacio antes de puntuación
+    resultado = re.sub(r"^[\s,.]+", "", resultado)          # signos sueltos al inicio
+    resultado = resultado.strip()
+
+    # Si quedó algo como "Hola, " o "Hola." al inicio seguido de mayúscula,
+    # lo dejamos tal cual (es correcto). Capitalizar la primera letra por si acaso.
+    if resultado and resultado[0].islower():
+        resultado = resultado[0].upper() + resultado[1:]
+
+    return resultado
 
 # ── Función principal: responder una pregunta ────────────────
 
@@ -170,6 +220,14 @@ def responder(
     fragmentos = rerank(pregunta_segura, candidatos, top_k=n)
     contexto, fuentes = _construir_contexto(fragmentos)
 
+    # Versión de fuentes en texto legible "documento.pdf (página X)"
+    fuentes_texto = []
+    for f in fuentes:
+        if f["pagina"]:
+            fuentes_texto.append(f"{f['fuente']} (página {f['pagina']})")
+        else:
+            fuentes_texto.append(f["fuente"])
+
     # ── 2. GENERAR: construir los mensajes para Llama ───────────
     mensajes = [{"role": "system", "content": PROMPT_SISTEMA}]
 
@@ -193,6 +251,11 @@ def responder(
     )
     texto_respuesta = respuesta_llm["message"]["content"].strip()
 
+    # ── LIMPIAR ETIQUETAS DE ANONIMIZACIÓN de la respuesta ──
+    # El modelo a veces repite las etiquetas ([NOMBRE], [DNI]...) en su
+    # respuesta. Las quitamos para que la respuesta quede natural.
+    texto_respuesta = _limpiar_etiquetas(texto_respuesta)
+
     # ── GUARDRAIL DE SALIDA: validar la respuesta antes de mostrarla ──
     validacion_salida = validar_salida(texto_respuesta)
     if not validacion_salida.es_valida:
@@ -202,7 +265,7 @@ def responder(
         "pregunta":          pregunta,
         "pregunta_segura":   pregunta_segura,
         "respuesta":         texto_respuesta,
-        "fuentes":           fuentes,
+        "fuentes":           fuentes_texto,
         "n_fragmentos":      len(fragmentos),
         "pii_detectada":     pii_detectada,
         "bloqueado":         False,
